@@ -1598,9 +1598,17 @@ class AIAgent:
         compression_target_ratio = float(_compression_cfg.get("target_ratio", 0.20))
         compression_protect_last = int(_compression_cfg.get("protect_last_n", 20))
 
+        # Read explicit context_length override from model config
+        _model_cfg = _agent_cfg.get("model", {})
+        if isinstance(_model_cfg, dict):
+            _config_context_length = _model_cfg.get("context_length")
+        else:
+            _config_context_length = None
+
         # Read optional explicit context_length override for the auxiliary
-        # compression model. Custom endpoints often cannot report this via
-        # /models, so the startup feasibility check needs the config hint.
+        # compression model. If unset, inherit the main model context_length
+        # override so custom endpoints don't regress to the 128K fallback when
+        # the compression runtime mirrors the main runtime.
         try:
             _aux_cfg = _agent_cfg.get("auxiliary", {}).get("compression", {})
         except Exception:
@@ -1609,19 +1617,6 @@ class AIAgent:
             _aux_context_config = _aux_cfg.get("context_length")
         else:
             _aux_context_config = None
-        if _aux_context_config is not None:
-            try:
-                _aux_context_config = int(_aux_context_config)
-            except (TypeError, ValueError):
-                _aux_context_config = None
-        self._aux_compression_context_length_config = _aux_context_config
-
-        # Read explicit context_length override from model config
-        _model_cfg = _agent_cfg.get("model", {})
-        if isinstance(_model_cfg, dict):
-            _config_context_length = _model_cfg.get("context_length")
-        else:
-            _config_context_length = None
         if _config_context_length is not None:
             try:
                 _config_context_length = int(_config_context_length)
@@ -1643,6 +1638,21 @@ class AIAgent:
 
         # Store for reuse in switch_model (so config override persists across model switches)
         self._config_context_length = _config_context_length
+
+        if _aux_context_config is not None:
+            try:
+                _aux_context_config = int(_aux_context_config)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Invalid auxiliary.compression.context_length in config.yaml: %r — "
+                    "must be a plain integer (e.g. 256000, not '256K'). "
+                    "Falling back to inherited/auto-detected context window.",
+                    _aux_context_config,
+                )
+                _aux_context_config = None
+        if _aux_context_config is None:
+            _aux_context_config = _config_context_length
+        self._aux_compression_context_length_config = _aux_context_config
 
         # Check custom_providers per-model context_length
         if _config_context_length is None:
@@ -1682,6 +1692,9 @@ class AIAgent:
                                         file=sys.stderr,
                                     )
                     break
+
+        # Store for reuse in switch_model (so config override persists across model switches)
+        self._config_context_length = _config_context_length
         
         # Select context engine: config-driven (like memory providers).
         # 1. Check config.yaml context.engine setting

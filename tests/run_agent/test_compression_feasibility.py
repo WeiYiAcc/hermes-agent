@@ -183,6 +183,30 @@ def test_feasibility_check_passes_config_context_length(mock_get_client, mock_ct
     )
 
 
+@patch("agent.model_metadata.get_model_context_length", return_value=1_050_000)
+@patch("agent.auxiliary_client.get_text_auxiliary_client")
+def test_feasibility_check_inherits_main_context_length_when_aux_unset(mock_get_client, mock_ctx_len):
+    """When auxiliary.compression.context_length is unset, inherit the main
+    model context_length override for the compression feasibility probe."""
+    agent = _make_agent(main_context=1_050_000, threshold_percent=0.50)
+    agent._config_context_length = 1_050_000
+    agent._aux_compression_context_length_config = 1_050_000
+    mock_client = MagicMock()
+    mock_client.base_url = "http://custom-endpoint:8080/v1"
+    mock_client.api_key = "sk-custom"
+    mock_get_client.return_value = (mock_client, "custom/big-model")
+
+    agent._emit_status = lambda msg: None
+    agent._check_compression_model_feasibility()
+
+    mock_ctx_len.assert_called_once_with(
+        "custom/big-model",
+        base_url="http://custom-endpoint:8080/v1",
+        api_key="sk-custom",
+        config_context_length=1_050_000,
+    )
+
+
 @patch("agent.model_metadata.get_model_context_length", return_value=128_000)
 @patch("agent.auxiliary_client.get_text_auxiliary_client")
 def test_feasibility_check_ignores_invalid_context_length(mock_get_client, mock_ctx_len):
